@@ -1,0 +1,77 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS Config Rule to check that security groups do not allow SSH access from 0.0.0.0/0
+
+Resources:
+  ConfigRecorder:
+    Type: AWS::Config::ConfigurationRecorder
+    Properties:
+      Name: default
+      RecordingGroup:
+        AllSupported: false
+        ResourceTypes:
+          - AWS::EC2::SecurityGroup
+      RoleARN: !GetAtt ConfigRole.Arn
+
+  DeliveryChannel:
+    Type: AWS::Config::DeliveryChannel
+    Properties:
+      Name: default
+      S3BucketName: !Ref ConfigBucket
+
+  ConfigBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'config-bucket-${AWS::AccountId}-${AWS::Region}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  ConfigRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: config.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWS_ConfigRole
+      Policies:
+        - PolicyName: ConfigS3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                Resource: !Sub '${ConfigBucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - s3:GetBucketAcl
+                Resource: !GetAtt ConfigBucket.Arn
+
+  RestrictedSSHConfigRule:
+    Type: AWS::Config::ConfigRule
+    DependsOn: ConfigRecorder
+    Properties:
+      ConfigRuleName: org-restricted-ssh
+      Description: Checks if security groups in use do not allow SSH traffic from 0.0.0.0/0. The rule is NON_COMPLIANT if SSH is allowed from 0.0.0.0/0.
+      Source:
+        Owner: AWS
+        SourceIdentifier: INCOMING_SSH_DISABLED
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::EC2::SecurityGroup
+
+Outputs:
+  ConfigRuleName:
+    Description: Name of the AWS Config Rule
+    Value: !Ref RestrictedSSHConfigRule
+  ConfigRuleArn:
+    Description: ARN of the AWS Config Rule
+    Value: !GetAtt RestrictedSSHConfigRule.Arn
